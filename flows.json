@@ -1,0 +1,673 @@
+[
+    {
+        "id": "176083bd4df6759a",
+        "type": "inject",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "取得天氣資料",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "3600",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.1,
+        "topic": "trigger_update",
+        "payload": "",
+        "payloadType": "date",
+        "x": 360,
+        "y": 320,
+        "wires": [
+            [
+                "6c2ca23c4bb24b3c"
+            ]
+        ]
+    },
+    {
+        "id": "6c2ca23c4bb24b3c",
+        "type": "http request",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "擷取中央氣象署API",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-073?Authorization=CWA-56C2C69C-CD5D-4DC8-A742-14BFC28C0EEC&format=JSON&ElementName=溫度,相對濕度,天氣現象,3小時降雨機率,體感溫度,風速,風向",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 570,
+        "y": 320,
+        "wires": [
+            [
+                "14590a0c6950c1ce",
+                "165d4b6b85bf21d1"
+            ]
+        ]
+    },
+    {
+        "id": "165d4b6b85bf21d1",
+        "type": "function",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "提取區域列表",
+        "func": "const locations = msg.payload?.records?.Locations?.[0]?.Location;\nif (!locations || !Array.isArray(locations)) {\n    node.warn(\"無法提取區域列表\");\n    return null;\n}\n\nconst districtNames = locations.map(loc => loc.LocationName);\n\nflow.set(\"cwa_api_data_v3\", msg.payload);\n\nmsg.options = districtNames;\n\nlet currentDistrict = flow.get(\"selected_district_v3\");\nif (!currentDistrict || !districtNames.includes(currentDistrict)) {\n    currentDistrict = districtNames[0];\n    flow.set(\"selected_district_v3\", currentDistrict);\n}\n\nmsg.payload = currentDistrict;\n\nnode.send({ topic: \"update_charts\", payload: {} }); \n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "flow.set(\"cwa_api_data_v3\", null);\nflow.set(\"selected_date_filter_v3\", \"all\");",
+        "finalize": "",
+        "libs": [],
+        "x": 840,
+        "y": 380,
+        "wires": [
+            [
+                "80229d662130a679"
+            ]
+        ]
+    },
+    {
+        "id": "80229d662130a679",
+        "type": "ui_dropdown",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "選擇區域",
+        "label": "選擇區域",
+        "tooltip": "選擇要顯示天氣圖表的臺中市區域",
+        "place": "選擇區域",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 1,
+        "width": 14,
+        "height": 1,
+        "passthru": false,
+        "multiple": false,
+        "options": [],
+        "payload": "",
+        "topic": "topic",
+        "topicType": "msg",
+        "className": "",
+        "x": 1080,
+        "y": 380,
+        "wires": [
+            [
+                "e849881e03e1077b"
+            ]
+        ]
+    },
+    {
+        "id": "e849881e03e1077b",
+        "type": "change",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "儲存選擇區域 & 觸發更新",
+        "rules": [
+            {
+                "t": "set",
+                "p": "selected_district_v3",
+                "pt": "flow",
+                "to": "payload",
+                "tot": "msg"
+            },
+            {
+                "t": "set",
+                "p": "topic",
+                "pt": "msg",
+                "to": "update_charts",
+                "tot": "str"
+            },
+            {
+                "t": "set",
+                "p": "payload",
+                "pt": "msg",
+                "to": "{}",
+                "tot": "json"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 910,
+        "y": 460,
+        "wires": [
+            [
+                "14590a0c6950c1ce"
+            ]
+        ]
+    },
+    {
+        "id": "14590a0c6950c1ce",
+        "type": "function",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "準備圖表與資訊資料",
+        "func": "const api_data = flow.get(\"cwa_api_data_v3\");\nconst selectedDistrictName = flow.get(\"selected_district_v3\");\nconst dateFilter = flow.get(\"selected_date_filter_v3\") || \"all\"; \n\nif (!api_data || !selectedDistrictName) {\n    node.warn(\"缺少API資料或選擇的區域\");\n    return null;\n}\n\nconst locations = api_data.records?.Locations?.[0]?.Location;\nif (!locations) return null;\n\nconst locationData = locations.find(loc => loc.LocationName === selectedDistrictName);\nif (!locationData) {\n    node.error(`找不到區域 [${selectedDistrictName}] 的資料`);\n    return null;\n}\n\nlet availableDates = [];\nif (locationData && locationData.WeatherElement) {\n    locationData.WeatherElement.forEach(elem => {\n        elem.Time.forEach(t => {\n            let timeStr = t.DataTime || t.StartTime;\n            if (timeStr) {\n                try {\n                    let dateStr = new Date(timeStr).toLocaleDateString('sv-SE');\n                    if (!availableDates.includes(dateStr)) {\n                        availableDates.push(dateStr);\n                    }\n                } catch(e) {}\n            }\n        });\n    });\n    availableDates.sort();\n}\n\nlet targetDateStr = null;\nif (dateFilter !== \"all\" && availableDates.length > 0) {\n    if (dateFilter === \"today\" && availableDates.length >= 1) {\n        targetDateStr = availableDates[0];\n    } else if (dateFilter === \"tomorrow\" && availableDates.length >= 2) {\n        targetDateStr = availableDates[1];\n    } else if (dateFilter === \"day_after\" && availableDates.length >= 3) {\n        targetDateStr = availableDates[2];\n    } else if (availableDates.includes(dateFilter)) {\n        targetDateStr = dateFilter;\n    }\n}\n\nlet tempValues = [], rhValues = [], atValues = [], popValues = [],\n    wxData = [], wsData = [], wdData = [];\n\nconst elementDetails = {\n    \"溫度\": { targetArray: tempValues, timeType: \"DataTime\", valueKey: \"Temperature\", unit: \"°C\", series: \"溫度 (°C)\" },\n    \"相對濕度\": { targetArray: rhValues, timeType: \"DataTime\", valueKey: \"RelativeHumidity\", unit: \"%\", series: \"相對濕度 (%)\" },\n    \"體感溫度\": { targetArray: atValues, timeType: \"DataTime\", valueKey: \"ApparentTemperature\", unit: \"°C\", series: \"體感溫度 (°C)\" },\n    \"3小時降雨機率\": { targetArray: popValues, timeType: \"StartTime\", valueKey: \"ProbabilityOfPrecipitation\", unit: \"%\", series: \"降雨機率 (%)\" },\n    \"天氣現象\": { targetArray: wxData, timeType: \"StartTime\", valueKey: \"Weather\", codeKey: \"WeatherCode\", descKey: \"WeatherDescription\", unit: \"\" },\n    \"風速\": { targetArray: wsData, timeType: \"StartTime\", valueKey: \"WindSpeed\", unit: \"m/s\" },\n    \"風向\": { targetArray: wdData, timeType: \"StartTime\", valueKey: \"WindDirection\", unit: \"\" }\n};\n\nlocationData.WeatherElement.forEach(elem => {\n    const details = elementDetails[elem.ElementName];\n    if (!details) return;\n\n    elem.Time.forEach(t => {\n        let timestamp = null;\n        let timeStrForDateCheck = null;\n        let values = {};\n\n        if (details.timeType === \"DataTime\" && t.DataTime) {\n            timeStrForDateCheck = t.DataTime;\n            try { timestamp = new Date(t.DataTime).getTime(); } catch (e) { }\n        } else if (details.timeType === \"StartTime\" && t.StartTime) {\n            timeStrForDateCheck = t.StartTime;\n            try { timestamp = new Date(t.StartTime).getTime(); } catch (e) { }\n        }\n        if (timestamp === null) return;\n\n        if (targetDateStr !== null) {\n            let currentItemDateStr = null;\n            try { currentItemDateStr = new Date(timeStrForDateCheck).toLocaleDateString('sv-SE'); } catch (e) { return; }\n            if (currentItemDateStr !== targetDateStr) {\n                return; \n            }\n        }\n\n        if (t.ElementValue && Array.isArray(t.ElementValue) && t.ElementValue.length > 0) {\n            let rawValObj = t.ElementValue[0];\n            if (details.valueKey && rawValObj[details.valueKey] !== undefined) {\n                let extracted = rawValObj[details.valueKey];\n                if (elem.ElementName !== \"天氣現象\" && elem.ElementName !== \"風向\") {\n                    let num = parseFloat(extracted);\n                    values.y = isNaN(num) ? null : num;\n                } else {\n                    values.y = extracted;\n                }\n            }\n            if (details.codeKey && rawValObj[details.codeKey]) values.code = rawValObj[details.codeKey];\n            if (details.descKey && rawValObj[details.descKey]) values.desc = rawValObj[details.descKey];\n        }\n\n        if (values.y !== undefined && values.y !== null) {\n            details.targetArray.push({ x: timestamp, ...values });\n        }\n    });\n});\n\nObject.values(elementDetails).forEach(d => d.targetArray.sort((a, b) => a.x - b.x));\n\nlet now = Date.now();\nlet chartTitleSuffix = targetDateStr ? ` (${targetDateStr})` : \"\";\nlet textTitlePrefix = targetDateStr ? `(${targetDateStr}) ` : \"(下個時段) \";\nlet gaugeTitlePrefix = targetDateStr ? `(${targetDateStr}) ` : \"(目前/下個) \";\n\nlet mainChartMsg = {\n    topic: \"main_chart\",\n    payload: [{\n        series: [elementDetails[\"溫度\"].series, elementDetails[\"相對濕度\"].series, elementDetails[\"體感溫度\"].series],\n        data: [tempValues, rhValues, atValues],\n        labels: [\"時間\"]\n    }],\n    title: `${selectedDistrictName} - 溫度趨勢${chartTitleSuffix}`\n};\n\nlet popChartMsg = {\n    topic: \"pop_chart\",\n    payload: [{\n        series: [elementDetails[\"3小時降雨機率\"].series],\n        data: [popValues.map(p => ({ x: p.x, y: p.y || 0 }))],\n        labels: [\"時間\"]\n    }],\n    title: `${selectedDistrictName} - 3小時降雨機率${chartTitleSuffix}`\n};\n\nlet wxText = \"-\";\nlet nextWx = null;\nif (targetDateStr) { nextWx = wxData.length > 0 ? wxData[0] : null; } \nelse { nextWx = wxData.find(item => item.x >= now) || (wxData.length > 0 ? wxData[0] : null); }\nif (nextWx) {\n    let startTimeStr = new Date(nextWx.x).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });\n    wxText = `${startTimeStr} | ${nextWx.desc || nextWx.y} (代碼: ${nextWx.code || 'N/A'})`;\n}\nlet wxTextMsg = { topic: \"wx_text\", payload: wxText, title: `${textTitlePrefix}天氣狀況` };\n\nlet windText = \"-\";\nlet nextWs = null, nextWd = null;\nif (targetDateStr) { \n    nextWs = wsData.length > 0 ? wsData[0] : null;\n    nextWd = wdData.length > 0 ? wdData[0] : null;\n} else {\n    nextWs = wsData.find(item => item.x >= now) || (wsData.length > 0 ? wsData[0] : null);\n    nextWd = wdData.find(item => item.x >= now) || (wdData.length > 0 ? wdData[0] : null);\n}\nif (nextWs && nextWd && nextWs.x === nextWd.x) {\n    let startTimeStr = new Date(nextWs.x).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });\n    windText = `${startTimeStr} | ${nextWd.y} ${nextWs.y}${elementDetails[\"風速\"].unit}`;\n} else if (nextWs) {\n    let startTimeStr = new Date(nextWs.x).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });\n    windText = `${startTimeStr} | 風速: ${nextWs.y}${elementDetails[\"風速\"].unit}`;\n} else if (nextWd) {\n    let startTimeStr = new Date(nextWd.x).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });\n    windText = `${startTimeStr} | 風向: ${nextWd.y}`;\n}\nlet windTextMsg = { topic: \"wind_text\", payload: windText, title: `${textTitlePrefix}風速與風向` };\n\nlet gaugeTempValue = null;\nlet gaugeTitle = `${gaugeTitlePrefix}溫度`;\nlet tempForGauge = null;\nif (targetDateStr) {\n    tempForGauge = tempValues.length > 0 ? tempValues[0] : null;\n} else {\n    tempForGauge = tempValues.find(item => item.x >= now) || (tempValues.length > 0 ? tempValues[tempValues.length - 1] : null);\n}\nif (tempForGauge && typeof tempForGauge.y === 'number') {\n    gaugeTempValue = tempForGauge.y;\n}\nlet gaugeMsg = {\n    topic: \"temp_gauge\",\n    payload: gaugeTempValue,\n    title: gaugeTitle \n};\n\nlet geminiWeatherSummary = {\n    location: selectedDistrictName,\n    dateContext: targetDateStr ? `關於 ${targetDateStr} 的天氣` : \"關於目前或接下來的天氣狀況\",\n    weatherPhenomenon: \"無資料\",\n    temperature: \"無資料\",\n    apparentTemperature: \"無資料\",\n    relativeHumidity: \"無資料\",\n    precipitationProbability: \"無資料\",\n    windInfo: \"無資料\"\n};\n\nlet tempForContext = null, atForContext = null, rhForContext = null, popForContext = null, wxForContext = null, wsForContext = null, wdForContext = null;\nlet nowCtx = Date.now();\n\nif (targetDateStr) {\n    wxForContext = wxData.length > 0 ? wxData[0] : null;\n    tempForContext = tempValues.length > 0 ? tempValues[0] : null;\n    atForContext = atValues.length > 0 ? atValues[0] : null;\n    rhForContext = rhValues.length > 0 ? rhValues[0] : null;\n    popForContext = popValues.length > 0 ? popValues[0] : null;\n    wsForContext = wsData.length > 0 ? wsData[0] : null;\n    wdForContext = wdData.length > 0 ? wdData[0] : null;\n} else {\n    wxForContext = wxData.find(item => item.x >= nowCtx) || (wxData.length > 0 ? wxData[wxData.length - 1] : null);\n    tempForContext = tempValues.find(item => item.x >= nowCtx) || (tempValues.length > 0 ? tempValues[tempValues.length - 1] : null);\n    atForContext = atValues.find(item => item.x >= nowCtx) || (atValues.length > 0 ? atValues[atValues.length - 1] : null);\n    rhForContext = rhValues.find(item => item.x >= nowCtx) || (rhValues.length > 0 ? rhValues[rhValues.length - 1] : null);\n    popForContext = popValues.find(item => item.x >= nowCtx) || (popValues.length > 0 ? popValues[popValues.length - 1] : null);\n    wsForContext = wsData.find(item => item.x >= nowCtx) || (wsData.length > 0 ? wsData[wsData.length - 1] : null);\n    \n    let tempWdForContext = wdData.find(item => item.x >= nowCtx);\n    if (wsForContext && tempWdForContext && wsForContext.x !== tempWdForContext.x) {\n        let matchingWd = wdData.find(w => w.x === wsForContext.x);\n        wdForContext = matchingWd || tempWdForContext;\n    } else {\n        wdForContext = tempWdForContext || (wdData.length > 0 ? wdData[wdData.length - 1] : null);\n    }\n}\n\nif (wxForContext) geminiWeatherSummary.weatherPhenomenon = `${wxForContext.desc || wxForContext.y} (代碼: ${wxForContext.code || 'N/A'}) (時間: ${new Date(wxForContext.x).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })})`;\nif (tempForContext) geminiWeatherSummary.temperature = `${tempForContext.y}°C (時間: ${new Date(tempForContext.x).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })})`;\nif (atForContext) geminiWeatherSummary.apparentTemperature = `${atForContext.y}°C (時間: ${new Date(atForContext.x).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })})`;\nif (rhForContext) geminiWeatherSummary.relativeHumidity = `${rhForContext.y}% (時間: ${new Date(rhForContext.x).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })})`;\nif (popForContext) geminiWeatherSummary.precipitationProbability = `${popForContext.y || 0}% (開始時間: ${new Date(popForContext.x).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })})`;\n\nlet windParts = [];\nif (wdForContext && wdForContext.y) windParts.push(`風向 ${wdForContext.y}`);\nif (wsForContext && wsForContext.y) windParts.push(`風速 ${wsForContext.y} m/s`);\nif (windParts.length > 0) {\n    let windTime = (wsForContext || wdForContext).x;\n    geminiWeatherSummary.windInfo = `${windParts.join(', ')} (時間: ${new Date(windTime).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })})`;\n}\n\nflow.set(\"gemini_weather_context\", geminiWeatherSummary);\n\nnode.send([mainChartMsg, popChartMsg, wxTextMsg, windTextMsg, gaugeMsg]);\nreturn null; ",
+        "outputs": 5,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 840,
+        "y": 240,
+        "wires": [
+            [
+                "8c02b8e3b9318434"
+            ],
+            [
+                "19cca9c1c874714e"
+            ],
+            [
+                "6ad740b84391b903"
+            ],
+            [
+                "c0a862c5f35abe61"
+            ],
+            [
+                "658d01f5f9721369"
+            ]
+        ]
+    },
+    {
+        "id": "6ad740b84391b903",
+        "type": "ui_text",
+        "z": "f8d9e0b1.a9c3e",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 12,
+        "width": 14,
+        "height": 1,
+        "name": "天氣狀況",
+        "label": "{{msg.title}}",
+        "format": "{{msg.payload}}",
+        "layout": "row-left",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "x": 1080,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "c0a862c5f35abe61",
+        "type": "ui_text",
+        "z": "f8d9e0b1.a9c3e",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 13,
+        "width": 14,
+        "height": 1,
+        "name": "風速與風向",
+        "label": "{{msg.title}}",
+        "format": "{{msg.payload}}",
+        "layout": "row-left",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "x": 1090,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "2c37405068430f98",
+        "type": "ui_button",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "全部顯示",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 4,
+        "width": 5,
+        "height": 1,
+        "passthru": false,
+        "label": "全部",
+        "tooltip": "顯示全部預報時段",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "all",
+        "payloadType": "str",
+        "topic": "set_date_filter",
+        "topicType": "str",
+        "x": 360,
+        "y": 400,
+        "wires": [
+            [
+                "2bddac24835d1013"
+            ]
+        ]
+    },
+    {
+        "id": "978be9140b1bb372",
+        "type": "ui_button",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "今天",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 5,
+        "width": 3,
+        "height": 1,
+        "passthru": false,
+        "label": "今天",
+        "tooltip": "僅顯示今天的預報",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "today",
+        "payloadType": "str",
+        "topic": "set_date_filter",
+        "topicType": "str",
+        "x": 350,
+        "y": 440,
+        "wires": [
+            [
+                "2bddac24835d1013"
+            ]
+        ]
+    },
+    {
+        "id": "be7443651ace4b5d",
+        "type": "ui_button",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "明天",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 6,
+        "width": 3,
+        "height": 1,
+        "passthru": false,
+        "label": "明天",
+        "tooltip": "僅顯示明天的預報",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "tomorrow",
+        "payloadType": "str",
+        "topic": "set_date_filter",
+        "topicType": "str",
+        "x": 350,
+        "y": 480,
+        "wires": [
+            [
+                "2bddac24835d1013"
+            ]
+        ]
+    },
+    {
+        "id": "645a71271cbcf50b",
+        "type": "ui_button",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "後天",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 7,
+        "width": 3,
+        "height": 1,
+        "passthru": false,
+        "label": "後天",
+        "tooltip": "僅顯示後天的預報",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "day_after",
+        "payloadType": "str",
+        "topic": "set_date_filter",
+        "topicType": "str",
+        "x": 350,
+        "y": 520,
+        "wires": [
+            [
+                "2bddac24835d1013"
+            ]
+        ]
+    },
+    {
+        "id": "2bddac24835d1013",
+        "type": "change",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "儲存日期過濾 & 觸發更新",
+        "rules": [
+            {
+                "t": "set",
+                "p": "selected_date_filter_v3",
+                "pt": "flow",
+                "to": "payload",
+                "tot": "msg"
+            },
+            {
+                "t": "set",
+                "p": "topic",
+                "pt": "msg",
+                "to": "update_charts",
+                "tot": "str"
+            },
+            {
+                "t": "set",
+                "p": "payload",
+                "pt": "msg",
+                "to": "{}",
+                "tot": "json"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 590,
+        "y": 460,
+        "wires": [
+            [
+                "14590a0c6950c1ce"
+            ]
+        ]
+    },
+    {
+        "id": "658d01f5f9721369",
+        "type": "ui_gauge",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "平均溫度",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 11,
+        "width": 4,
+        "height": 7,
+        "gtype": "wave",
+        "title": "{{msg.title}}",
+        "label": "°C",
+        "format": "{{value | number:1}}",
+        "min": 0,
+        "max": "50",
+        "colors": [
+            "#00b500",
+            "#e6e600",
+            "#ca3838"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1080,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "19cca9c1c874714e",
+        "type": "ui_chart",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "降雨機率",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 10,
+        "width": 10,
+        "height": 7,
+        "label": "{{msg.title}}",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "MM/DD HH:mm",
+        "interpolate": "linear",
+        "nodata": "資料載入中...",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "100",
+        "removeOlder": "3",
+        "removeOlderPoints": "",
+        "removeOlderUnit": "86400",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#1f77b4",
+            "#aec7e8",
+            "#ff7f0e",
+            "#ffbb78",
+            "#2ca02c",
+            "#98df8a",
+            "#d62728",
+            "#ff9896",
+            "#000000"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1080,
+        "y": 200,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "8c02b8e3b9318434",
+        "type": "ui_chart",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "主要趨勢圖",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 9,
+        "width": 14,
+        "height": 8,
+        "label": "{{msg.title}}",
+        "chartType": "line",
+        "legend": "true",
+        "xformat": "HH:mm",
+        "interpolate": "linear",
+        "nodata": "資料載入中...",
+        "dot": false,
+        "ymin": "",
+        "ymax": "",
+        "removeOlder": "3",
+        "removeOlderPoints": "",
+        "removeOlderUnit": "86400",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#ff7f0e",
+            "#1f77b4",
+            "#d62728",
+            "#2ca02c",
+            "#9467bd",
+            "#8c564b",
+            "#e377c2",
+            "#7f7f7f",
+            "#000000"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1090,
+        "y": 160,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "c837ae6f03285317",
+        "type": "ui_text_input",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "輸入訊息框",
+        "label": "請輸入你的訊息:",
+        "tooltip": "",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 2,
+        "width": 11,
+        "height": 1,
+        "passthru": true,
+        "mode": "text",
+        "delay": "250",
+        "topic": "user_input_field_changed",
+        "sendOnBlur": false,
+        "className": "",
+        "topicType": "str",
+        "x": 550,
+        "y": 520,
+        "wires": [
+            [
+                "f9a7dcd58ff6116f"
+            ]
+        ]
+    },
+    {
+        "id": "f9a7dcd58ff6116f",
+        "type": "change",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "儲存用戶輸入",
+        "rules": [
+            {
+                "t": "set",
+                "p": "pendingChatMessage",
+                "pt": "flow",
+                "to": "payload",
+                "tot": "msg"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 800,
+        "y": 520,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "cdde67e457544a1e",
+        "type": "ui_button",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "傳送按鈕",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 3,
+        "width": 3,
+        "height": 1,
+        "passthru": false,
+        "label": "傳送",
+        "tooltip": "點此傳送訊息",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "true",
+        "payloadType": "bool",
+        "topic": "send_button_pressed",
+        "topicType": "str",
+        "x": 540,
+        "y": 580,
+        "wires": [
+            [
+                "4a1f071a3d96e0f1"
+            ]
+        ]
+    },
+    {
+        "id": "4a1f071a3d96e0f1",
+        "type": "function",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "準備 Gemini HTTP 請求",
+        "func": "const userQuery = flow.get(\"pendingChatMessage\") || \"\";\nconst apiKey = '這裡要換成我簡報裡提供的apiKey'; \n\nif (!userQuery.trim()) {\n    node.warn(\"聊天內容為空，不呼叫 Gemini API。\");\n    return null; \n}\n\nconst modelName = 'gemini-2.0-flash'; \n\nmsg.url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;\nmsg.method = \"POST\";\nmsg.headers = {\n    \"Content-Type\": \"application/json\"\n};\n\nlet weatherContext = flow.get(\"gemini_weather_context\") || {};\nlet prompt = `你是一個友善且樂於助人的天氣小助手。\n你的任務是根據以下天氣資訊，回答使用者關於「${weatherContext.location || '選定區域'}」在「${weatherContext.dateContext || '目前或接下來'}」天氣的問題，並提供是否適合出門、建議穿著、以及是否需要攜帶雨具等實用建議。\n\n目前天氣數據摘要：\n- 天氣狀況：${weatherContext.weatherPhenomenon || '暫無資料'}\n- 氣溫：${weatherContext.temperature || '暫無資料'}\n- 體感溫度：${weatherContext.apparentTemperature || '暫無資料'}\n- 相對濕度：${weatherContext.relativeHumidity || '暫無資料'}\n- 降雨機率 (未來3小時內概況)：${weatherContext.precipitationProbability || '暫無資料'}\n- 風力資訊：${weatherContext.windInfo || '暫無資料'}\n\n使用者問題：「${userQuery}」\n\n請根據以上資訊和使用者的問題，產生一個簡潔、實用且口語化的回覆。回答時請參考提供的天氣數據，並給出明確的建議。如果使用者的問題與天氣無關，請引導他詢問有關天氣、穿著或出行建議的問題。\n請直接回答使用者的問題，不要重複他的提問，並提供相應建議。\n`;\n\nmsg.payload = {\n    \"contents\": [\n        {\n            \"parts\": [\n                {\n                    \"text\": prompt\n                }\n            ]\n        }\n    ],\n    \"generationConfig\": {\n        \"maxOutputTokens\": 350,\n        \"temperature\": 0.2,\n        \"topP\": 0.8\n    }\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 830,
+        "y": 640,
+        "wires": [
+            [
+                "88693e6e521c2e6c"
+            ]
+        ]
+    },
+    {
+        "id": "88693e6e521c2e6c",
+        "type": "http request",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "Gemini API Call",
+        "method": "use",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 1080,
+        "y": 640,
+        "wires": [
+            [
+                "e969ac7564952d0c"
+            ]
+        ]
+    },
+    {
+        "id": "e969ac7564952d0c",
+        "type": "function",
+        "z": "f8d9e0b1.a9c3e",
+        "name": "處理 Gemini HTTP 回應",
+        "func": "let responseText = \"\";\nlet clearInput = false;\n\nif (msg.payload && msg.statusCode && msg.statusCode >= 200 && msg.statusCode < 300) {\n    try {\n        if (msg.payload.candidates && msg.payload.candidates[0] &&\n            msg.payload.candidates[0].content && msg.payload.candidates[0].content.parts &&\n            msg.payload.candidates[0].content.parts[0] && msg.payload.candidates[0].content.parts[0].text) {\n            \n            responseText = msg.payload.candidates[0].content.parts[0].text;\n            flow.set(\"pendingChatMessage\", \"\");\n            clearInput = true;\n        } else if (msg.payload.promptFeedback && msg.payload.promptFeedback.blockReason) {\n            responseText = `AI請求因安全設定被拒絕/封鎖：${msg.payload.promptFeedback.blockReason}`;\n            if (msg.payload.promptFeedback.safetyRatings) {\n                 responseText += ` (${msg.payload.promptFeedback.safetyRatings.map(r => r.category + ':' + r.probability).join(', ')})`;\n            }\n        } else {\n            responseText = \"AI 回應的格式無法識別，但請求可能成功完成。\";\n        }\n    } catch (e) {\n        responseText = \"處理 AI 回應時發生內部錯誤。\";\n    }\n} else {\n    if (msg.payload && msg.payload.error && msg.payload.error.message) {\n        responseText = \"AI 服務錯誤：「\" + msg.payload.error.message + \"」\";\n    } else if (msg.payload && typeof msg.payload === 'string' && (msg.payload.includes(\"API key not valid\") || msg.payload.includes(\"Unauthenticated\"))) {\n        responseText = \"AI 服務 API 金鑰可能無效，或認證失敗。\";\n    } else if (msg.statusCode === 400) {\n        responseText = \"AI 服務拒絕了請求 (400)，可能原因：請求格式錯誤、模型名稱無效或 API 金鑰問題。\";\n    } else if (msg.statusCode === 403) {\n        responseText = \"AI 服務拒絕存取 (403)。請檢查 API 金鑰權限或專案設定。\";\n    } else if (msg.statusCode === 429) {\n        responseText = \"AI 服務請求頻率過高 (429)。請稍後再試。\";\n    } else {\n        responseText = \"無法連接至 AI 服務或收到無效的回應 (HTTP \" + (msg.statusCode || \"N/A\") + \")。\";\n    }\n}\n\nconst UIMessage = { payload: responseText, topic: \"gemini_response_processed\" };\nconst clearInputMessage = clearInput ? { payload: \"\", topic: \"clear_input_field\" } : null;\n\nreturn [UIMessage, clearInputMessage];",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 830,
+        "y": 580,
+        "wires": [
+            [
+                "bc1ca64b85dba712"
+            ],
+            [
+                "c837ae6f03285317"
+            ]
+        ]
+    },
+    {
+        "id": "bc1ca64b85dba712",
+        "type": "ui_text",
+        "z": "f8d9e0b1.a9c3e",
+        "group": "a1b2c3d4.e5f6a7",
+        "order": 8,
+        "width": 14,
+        "height": 2,
+        "name": "Gemini 回應",
+        "label": "AI回應:",
+        "format": "<div style=\"white-space: pre-wrap; height: 100px; overflow-y: auto; border: 1px solid #ccc; padding: 5px; border-radius: 4px; font-size: large;\">{{msg.payload}}</div>",
+        "layout": "row-left",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "x": 1090,
+        "y": 560,
+        "wires": []
+    },
+    {
+        "id": "a1b2c3d4.e5f6a7",
+        "type": "ui_group",
+        "name": "天氣圖表",
+        "tab": "2ef229c6c3de69de",
+        "order": 2,
+        "disp": true,
+        "width": 28,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "2ef229c6c3de69de",
+        "type": "ui_tab",
+        "name": "天氣",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    }
+]
