@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 智慧天氣預報系統（Node-RED）
 
 本專案是一套基於 Node-RED 的智慧天氣預報系統，能夠自動擷取中央氣象署的天氣資料，並以圖表及資訊面板的方式，於 Node-RED Dashboard 上即時呈現各區域的天氣狀況，包括溫度、體感溫度、相對濕度、降雨機率、天氣現象、風速與風向等。
@@ -27,3 +28,6 @@
 ---
 
 MIT License 
+=======
+# Node-RED-Smart-Weather-Forecasting-System
+>>>>>>> 66a468945d28aca467fdc599025130ae0fd6ea4b
